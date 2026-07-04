@@ -143,7 +143,7 @@ jobs:
       
       - name: Upload artifacts
         if: always()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: triager-output
           path: log-triager/output/
@@ -156,23 +156,18 @@ jobs:
           git config user.name "Log Triager Bot"
           git config user.email "bot@log-triager.local"
           
-          # Pull latest changes
           git pull origin main || true
           
-          # Create results directory
           mkdir -p log-triager/results
           
-          # Copy report if it exists
           if [ -f "log-triager/output/report.md" ]; then
             cp log-triager/output/report.md log-triager/results/report_$(date +%Y%m%d_%H%M%S).md
           fi
           
-          # Copy summary if it exists
           if [ -f "log-triager/output/summary.json" ]; then
             cp log-triager/output/summary.json log-triager/results/summary_$(date +%Y%m%d_%H%M%S).json
           fi
           
-          # Add and commit
           git add log-triager/output/ log-triager/results/ || true
           git commit -m "🔍 Log triage report - ${{ inputs.logs_filename }} - $(date +%Y-%m-%d\ %H:%M:%S)" || echo "No changes to commit"
           git push origin main || echo "Failed to push"
