@@ -41,30 +41,12 @@ st.markdown("""
         opacity: 0.9;
     }
     
-    .card {
-        background: white;
-        padding: 1.5rem;
-        border-radius: 10px;
-        border: 1px solid #e0e0e0;
-        margin-bottom: 1rem;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-    }
-    
     .status-success {
         background: #d4edda;
         color: #155724;
         padding: 0.75rem;
         border-radius: 5px;
         border-left: 4px solid #28a745;
-        margin: 0.5rem 0;
-    }
-    
-    .status-info {
-        background: #d1ecf1;
-        color: #0c5460;
-        padding: 0.75rem;
-        border-radius: 5px;
-        border-left: 4px solid #17a2b8;
         margin: 0.5rem 0;
     }
     
@@ -99,18 +81,12 @@ st.markdown("""
     }
     
     .section-title {
-        font-size: 1.5rem;
+        font-size: 1.3rem;
         font-weight: 600;
         color: #333;
         margin: 1.5rem 0 1rem 0;
         padding-bottom: 0.5rem;
         border-bottom: 2px solid #667eea;
-    }
-    
-    .button-group {
-        display: flex;
-        gap: 1rem;
-        margin: 1rem 0;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -144,7 +120,6 @@ col1, col2 = st.columns([2, 1], gap="large")
 # LEFT COLUMN - MAIN CONTENT
 # ============================================================================
 with col1:
-    # ========== UPLOAD SECTION ==========
     st.markdown("### 📤 Upload Logs")
     
     uploaded_file = st.file_uploader(
@@ -207,7 +182,6 @@ with col1:
         except Exception as e:
             st.error(f"❌ Error reading file: {str(e)}")
             uploaded_file = None
-    
     else:
         st.info("👆 Upload a CI/CD pipeline log file to get started")
     
@@ -256,10 +230,9 @@ with col1:
                                     </div>
                                     """, unsafe_allow_html=True)
                                     
-                                    st.info(f"**Workflow ID:** `{latest_run.id}`")
-                                    st.info("⏳ Processing (2-5 minutes). Check back soon!")
-                                    time.sleep(1)
-                                    st.rerun()
+                                    st.success(f"**Workflow ID:** `{latest_run.id}`")
+                                    st.info("⏳ Processing (2-5 minutes). Check status in the sidebar or GitHub Actions.")
+                                    
                             else:
                                 st.error("❌ Failed to trigger workflow")
                         
@@ -268,7 +241,7 @@ with col1:
         
         with col_btn2:
             if "workflow_run_id" in st.session_state:
-                if st.button("🔄 Refresh Status", use_container_width=True):
+                if st.button("🔄 Check Status", use_container_width=True):
                     try:
                         g = Github(github_token)
                         repo = g.get_repo(f"{GITHUB_OWNER}/{GITHUB_REPO}")
@@ -283,18 +256,21 @@ with col1:
                         
                         st.info(f"**Status:** {status_map.get(run.status, run.status)}")
                         
-                        if run.status == "completed" and run.conclusion == "success":
-                            st.success("✅ Analysis completed!")
-                            st.rerun()
+                        if run.status == "completed":
+                            if run.conclusion == "success":
+                                st.success("✅ Workflow completed successfully!")
+                                st.info("📥 Check GitHub Actions → Artifacts for your report")
+                            else:
+                                st.error(f"❌ Workflow failed: {run.conclusion}")
                     
                     except Exception as e:
                         st.error(f"Error: {str(e)}")
 
 # ============================================================================
-# RIGHT COLUMN - STATUS & SECRETS
+# RIGHT COLUMN - STATUS
 # ============================================================================
 with col2:
-    st.markdown("### ⚙️ Status")
+    st.markdown("### ⚙️ Configuration")
     
     # GitHub token status
     if github_token:
@@ -324,8 +300,12 @@ with col2:
         </div>
         """, unsafe_allow_html=True)
     
-    # Workflow status
+    st.divider()
+    st.markdown("### 📊 Workflow")
+    
     if "workflow_run_id" in st.session_state:
+        st.markdown(f"**ID:** `{st.session_state.workflow_run_id}`")
+        
         try:
             g = Github(github_token)
             repo = g.get_repo(f"{GITHUB_OWNER}/{GITHUB_REPO}")
@@ -334,124 +314,54 @@ with col2:
             if run.status == "completed":
                 st.markdown("""
                 <div class="status-success">
-                    ✅ Workflow Complete
+                    ✅ Complete
                 </div>
                 """, unsafe_allow_html=True)
             elif run.status == "in_progress":
                 st.markdown("""
-                <div class="status-info">
-                    🔵 Workflow Running
+                <div class="status-success">
+                    🔵 Running
                 </div>
                 """, unsafe_allow_html=True)
             else:
                 st.markdown("""
-                <div class="status-info">
-                    🟡 Workflow Queued
+                <div class="status-success">
+                    🟡 Queued
                 </div>
                 """, unsafe_allow_html=True)
         except:
             pass
+    else:
+        st.markdown("**Status:** Idle")
 
 # ============================================================================
-# RESULTS SECTION
+# INFO SECTION
 # ============================================================================
-if "workflow_run_id" in st.session_state:
-    st.divider()
-    st.markdown("### 📊 Analysis Results")
+st.divider()
+st.markdown("### ℹ️ How It Works")
+
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    st.markdown("""
+    **Step 1: Upload**
     
-    try:
-        g = Github(github_token)
-        repo = g.get_repo(f"{GITHUB_OWNER}/{GITHUB_REPO}")
-        run = repo.get_workflow_run(st.session_state.workflow_run_id)
-        
-        if run.status == "completed":
-            try:
-                artifacts = list(run.get_artifacts())
-                
-                if artifacts:
-                    for artifact in artifacts:
-                        artifact_data = artifact.download().read()
-                        
-                        # Extract zip and read files
-                        import zipfile
-                        import io
-                        
-                        with zipfile.ZipFile(io.BytesIO(artifact_data)) as z:
-                            files = z.namelist()
-                            
-                            # Read report.md
-                            if 'report.md' in files:
-                                report_content = z.read('report.md').decode('utf-8')
-                                
-                                col1, col2 = st.columns([4, 1])
-                                
-                                with col1:
-                                    st.markdown("#### 📋 Report")
-                                
-                                with col2:
-                                    st.download_button(
-                                        label="⬇ Download",
-                                        data=report_content,
-                                        file_name=f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md",
-                                        mime="text/markdown",
-                                        use_container_width=True
-                                    )
-                                
-                                # Display report in markdown
-                                st.markdown(report_content)
-                            
-                            # Read summary.json
-                            if 'summary.json' in files:
-                                summary_data = json.loads(z.read('summary.json').decode('utf-8'))
-                                
-                                st.divider()
-                                st.markdown("#### 📈 Summary Statistics")
-                                
-                                col1, col2, col3, col4 = st.columns(4)
-                                
-                                with col1:
-                                    st.markdown(f"""
-                                    <div class="metric-box">
-                                        <div class="metric-label">Total Logs</div>
-                                        <div class="metric-value">{summary_data.get('total_logs', 0)}</div>
-                                    </div>
-                                    """, unsafe_allow_html=True)
-                                
-                                with col2:
-                                    bugs = summary_data.get('genuine_bugs', 0)
-                                    st.markdown(f"""
-                                    <div class="metric-box">
-                                        <div class="metric-label">🐛 Genuine Bugs</div>
-                                        <div class="metric-value" style="color: #dc3545;">{bugs}</div>
-                                    </div>
-                                    """, unsafe_allow_html=True)
-                                
-                                with col3:
-                                    flakes = summary_data.get('environment_flakes', 0)
-                                    st.markdown(f"""
-                                    <div class="metric-box">
-                                        <div class="metric-label">🌧️ Flakes</div>
-                                        <div class="metric-value" style="color: #fd7e14;">{flakes}</div>
-                                    </div>
-                                    """, unsafe_allow_html=True)
-                                
-                                with col4:
-                                    pct = summary_data.get('bug_percentage', 0)
-                                    st.markdown(f"""
-                                    <div class="metric-box">
-                                        <div class="metric-label">Bug %</div>
-                                        <div class="metric-value" style="color: #667eea;">{pct}%</div>
-                                    </div>
-                                    """, unsafe_allow_html=True)
-                        
-            except Exception as e:
-                st.info("📦 Processing results...")
-        
-        else:
-            st.info(f"⏳ Workflow is {run.status}. Please wait...")
+    Upload your CI/CD pipeline log file (.txt, .log, or .json)
+    """)
+
+with col2:
+    st.markdown("""
+    **Step 2: Analyze**
     
-    except Exception as e:
-        st.warning("Unable to fetch results at the moment.")
+    Click 'Start Analysis' to trigger the GitHub Actions workflow
+    """)
+
+with col3:
+    st.markdown("""
+    **Step 3: Results**
+    
+    Check GitHub Actions for the generated report and artifacts
+    """)
 
 # ============================================================================
 # FOOTER
@@ -460,6 +370,6 @@ st.divider()
 st.markdown("""
 <div style="text-align: center; color: #6c757d; font-size: 0.9rem; margin-top: 2rem;">
     <p>🔍 Log Stream Triager | Powered by Groq LLM + GitHub Actions</p>
-    <p style="font-size: 0.85rem;">Built for automated CI/CD pipeline analysis</p>
+    <p style="font-size: 0.85rem;">Check GitHub Actions for detailed reports and results</p>
 </div>
 """, unsafe_allow_html=True)
