@@ -16,10 +16,11 @@ on:
 jobs:
   triager:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
       
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -29,10 +30,12 @@ jobs:
       
       - name: Install dependencies
         run: |
-          pip install -r requirements.txt
+          pip install --upgrade pip
+          pip install -r log-triager/requirements.txt
       
       - name: Decode logs from base64
         run: |
+          mkdir -p /tmp/logs
           echo "${{ inputs.logs_base64 }}" | base64 -d > /tmp/raw_logs.txt
           echo "✅ Decoded logs ($(wc -c < /tmp/raw_logs.txt) bytes)"
           echo "📄 Filename: ${{ inputs.logs_filename }}"
@@ -40,93 +43,136 @@ jobs:
       - name: SDET 1 - Log Ingestion & Filter
         id: ingest
         run: |
+          cd log-triager
           python -m agents.sdet_1_ingest \
             --input /tmp/raw_logs.txt \
             --output /tmp/filtered_logs.json
-          echo "Entry count: $(jq '.total_entries' /tmp/filtered_logs.json)"
+          echo "✅ Ingestion complete"
       
       - name: SDET 2 - LLM Classification (Groq)
         id: classify
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
         run: |
+          cd log-triager
           python -m agents.sdet_2_classify \
             --input /tmp/filtered_logs.json \
             --output /tmp/classified_logs.json \
             --api-key "$GROQ_API_KEY"
+          echo "✅ Classification complete"
       
       - name: SDET 3 - Validation & Cross-check
         id: validate
         run: |
+          cd log-triager
           python -m agents.sdet_3_validate \
             --classified /tmp/classified_logs.json \
             --output /tmp/validated_logs.json \
             --report /tmp/validation_report.txt
-          echo "=== Validation Report ===" 
+          echo "✅ Validation complete"
           cat /tmp/validation_report.txt
       
       - name: SDET 4 - Directory Router
         id: route
         run: |
+          cd log-triager
           python -m agents.sdet_4_route \
             --input /tmp/validated_logs.json \
             --output-dir ./output/categorized
-          echo "✅ Logs routed to categories"
+          echo "✅ Routing complete"
+          find ./output/categorized -type f | wc -l
       
       - name: SDET 5 - Markdown Report Builder
         id: report
         run: |
+          cd log-triager
           python -m agents.sdet_5_report \
             --classified /tmp/classified_logs.json \
             --validated /tmp/validated_logs.json \
             --output ./output/report.md \
             --logs-filename "${{ inputs.logs_filename }}" \
             --timestamp "${{ inputs.timestamp }}"
-          
-          echo "=== Report Generated ===" 
-          head -80 ./output/report.md
+          echo "✅ Report generation complete"
       
       - name: Create summary JSON
+        id: summary
         run: |
-          python -c "
+          mkdir -p log-triager/output
+          python3 << 'EOF'
           import json
-          with open('/tmp/validated_logs.json', 'r') as f:
-              data = json.load(f)
+          import os
           
-          bugs = len([e for e in data['entries'] if e.get('classification') == 'GENUINE_BUG'])
-          flakes = len([e for e in data['entries'] if e.get('classification') == 'ENVIRONMENT_FLAKE'])
+          try:
+              with open('/tmp/validated_logs.json', 'r') as f:
+                  data = json.load(f)
+              
+              bugs = len([e for e in data['entries'] if e.get('classification') == 'GENUINE_BUG'])
+              flakes = len([e for e in data['entries'] if e.get('classification') == 'ENVIRONMENT_FLAKE'])
+              total = len(data['entries'])
+              
+              summary = {
+                  'total_logs': total,
+                  'genuine_bugs': bugs,
+                  'environment_flakes': flakes,
+                  'bug_percentage': round(bugs/total*100, 1) if total > 0 else 0,
+                  'filename': '${{ inputs.logs_filename }}',
+                  'timestamp': '${{ inputs.timestamp }}',
+                  'status': 'success'
+              }
+          except Exception as e:
+              summary = {
+                  'error': str(e),
+                  'filename': '${{ inputs.logs_filename }}',
+                  'timestamp': '${{ inputs.timestamp }}',
+                  'status': 'error'
+              }
           
-          summary = {
-              'total_logs': len(data['entries']),
-              'genuine_bugs': bugs,
-              'environment_flakes': flakes,
-              'bug_percentage': round(bugs/len(data['entries'])*100, 1) if data['entries'] else 0,
-              'filename': '${{ inputs.logs_filename }}'
-          }
-          
-          with open('./output/summary.json', 'w') as f:
+          os.makedirs('log-triager/output', exist_ok=True)
+          with open('log-triager/output/summary.json', 'w') as f:
               json.dump(summary, f, indent=2)
           
-          print('📊 Summary created')
-          "
+          print("✅ Summary created")
+          print(json.dumps(summary, indent=2))
+          EOF
+      
+      - name: List output files
+        if: always()
+        run: |
+          echo "📂 Output files:"
+          find log-triager/output -type f 2>/dev/null | head -20
       
       - name: Upload artifacts
         if: always()
         uses: actions/upload-artifact@v3
         with:
           name: triager-output
-          path: output/
+          path: log-triager/output/
           retention-days: 30
+          if-no-files-found: warn
       
-      - name: Commit results back to repo
+      - name: Commit results to repo
         if: always()
         run: |
           git config user.name "Log Triager Bot"
           git config user.email "bot@log-triager.local"
+          
+          # Pull latest changes
           git pull origin main || true
-          mkdir -p output results
-          cp output/report.md results/report_$(date +%Y%m%d_%H%M%S).md || true
-          cp output/summary.json results/summary_$(date +%Y%m%d_%H%M%S).json || true
-          git add output/ results/ || true
-          git commit -m "🔍 Log triage report - ${{ inputs.logs_filename }} - ${{ inputs.timestamp }}" || true
-          git push origin main || true
+          
+          # Create results directory
+          mkdir -p log-triager/results
+          
+          # Copy report if it exists
+          if [ -f "log-triager/output/report.md" ]; then
+            cp log-triager/output/report.md log-triager/results/report_$(date +%Y%m%d_%H%M%S).md
+          fi
+          
+          # Copy summary if it exists
+          if [ -f "log-triager/output/summary.json" ]; then
+            cp log-triager/output/summary.json log-triager/results/summary_$(date +%Y%m%d_%H%M%S).json
+          fi
+          
+          # Add and commit
+          git add log-triager/output/ log-triager/results/ || true
+          git commit -m "🔍 Log triage report - ${{ inputs.logs_filename }} - $(date +%Y-%m-%d\ %H:%M:%S)" || echo "No changes to commit"
+          git push origin main || echo "Failed to push"
