@@ -19,7 +19,6 @@ GITHUB_OWNER = st.secrets.get("GITHUB_OWNER", "your-github-username")
 GITHUB_REPO = st.secrets.get("GITHUB_REPO", "hackathon")
 WORKFLOW_FILE = "log_triager.yml"
 
-# Get tokens from secrets (no UI input needed!)
 github_token = st.secrets.get("GITHUB_TOKEN", None)
 groq_token = st.secrets.get("GROQ_API_KEY", None)
 
@@ -28,7 +27,6 @@ groq_token = st.secrets.get("GROQ_API_KEY", None)
 # ============================================================================
 st.sidebar.title("⚙️ Configuration")
 
-# Display status of secrets
 if github_token:
     st.sidebar.success("✅ GitHub Token: Configured from Secrets")
 else:
@@ -39,7 +37,6 @@ if groq_token:
 else:
     st.sidebar.error("❌ Groq API Key: Not found in Secrets")
 
-# Optional: Allow manual override (for testing)
 with st.sidebar.expander("🔧 Override Secrets (Optional)"):
     manual_github = st.text_input(
         "Manual GitHub Token",
@@ -52,7 +49,6 @@ with st.sidebar.expander("🔧 Override Secrets (Optional)"):
         help="Leave empty to use secrets"
     )
     
-    # Use manual if provided, otherwise use secrets
     if manual_github:
         github_token = manual_github
     if manual_groq:
@@ -175,8 +171,14 @@ with col1:
                         st.session_state.log_content.encode('utf-8')
                     ).decode('utf-8')
                     
+                    # Trigger workflow
                     workflow = repo.get_workflow(WORKFLOW_FILE)
-                    run = workflow.create_dispatch(
+                    
+                    print(f"Triggering workflow: {WORKFLOW_FILE}")
+                    print(f"Repo: {GITHUB_OWNER}/{GITHUB_REPO}")
+                    
+                    # create_dispatch returns True/False
+                    dispatch_result = workflow.create_dispatch(
                         ref="main",
                         inputs={
                             "logs_base64": log_b64,
@@ -185,20 +187,36 @@ with col1:
                         }
                     )
                     
-                    st.session_state.workflow_run_id = run.id
-                    st.session_state.workflow_triggered_at = datetime.now()
-                    
-                    st.success(f"✅ Workflow triggered successfully!")
-                    st.info(
-                        f"**Workflow ID:** {run.id}\n\n"
-                        "**Processing time:** 2-5 minutes\n\n"
-                        "Check back in a few minutes to view results."
-                    )
-                    time.sleep(2)
-                    st.rerun()
-                    
+                    if dispatch_result:
+                        st.success("✅ Workflow triggered successfully!")
+                        
+                        # Wait for workflow to appear in runs
+                        time.sleep(3)
+                        
+                        # Get the latest workflow run
+                        runs = list(workflow.get_runs())
+                        
+                        if runs and len(runs) > 0:
+                            latest_run = runs[0]
+                            st.session_state.workflow_run_id = latest_run.id
+                            st.session_state.workflow_triggered_at = datetime.now()
+                            
+                            st.info(
+                                f"**Workflow ID:** {latest_run.id}\n\n"
+                                "**Status:** Just started\n\n"
+                                "**Processing time:** 2-5 minutes\n\n"
+                                "Check back in a few minutes to view results."
+                            )
+                            time.sleep(1)
+                            st.rerun()
+                        else:
+                            st.warning("⚠️ Workflow triggered but runs not yet visible. Try checking status in a moment.")
+                    else:
+                        st.error("❌ Failed to trigger workflow. Check your token and permissions.")
+                        
             except Exception as e:
                 st.error(f"❌ Error triggering workflow:\n\n{str(e)}")
+                print(f"Error: {str(e)}")
 
 with col2:
     if st.button("🔄 CHECK STATUS", use_container_width=True):
@@ -222,7 +240,7 @@ with col2:
                 
                 if run.status == "completed":
                     if run.conclusion == "success":
-                        st.success(f"✅ Workflow completed successfully!")
+                        st.success("✅ Workflow completed successfully!")
                     else:
                         st.error(f"❌ Workflow failed: {run.conclusion}")
                 
@@ -294,6 +312,5 @@ st.divider()
 st.caption(
     "Log Stream Triager | Powered by Groq LLM + GitHub Actions\n"
     "[Groq Docs](https://console.groq.com/docs) | "
-    "[GitHub Actions](https://docs.github.com/en/actions) | "
-    "[Source](https://github.com)"
+    "[GitHub Actions](https://docs.github.com/en/actions)"
 )
