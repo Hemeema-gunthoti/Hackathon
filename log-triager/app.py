@@ -13,38 +13,50 @@ st.set_page_config(
 )
 
 # ============================================================================
-# CONFIGURATION
+# CONFIGURATION - Read from Secrets Automatically
 # ============================================================================
 GITHUB_OWNER = st.secrets.get("GITHUB_OWNER", "your-github-username")
-GITHUB_REPO = st.secrets.get("GITHUB_REPO", "log-triager")
+GITHUB_REPO = st.secrets.get("GITHUB_REPO", "hackathon")
 WORKFLOW_FILE = "log_triager.yml"
+
+# Get tokens from secrets (no UI input needed!)
+github_token = st.secrets.get("GITHUB_TOKEN", None)
+groq_token = st.secrets.get("GROQ_API_KEY", None)
 
 # ============================================================================
 # SIDEBAR
 # ============================================================================
 st.sidebar.title("⚙️ Configuration")
 
-github_token = st.sidebar.text_input(
-    "GitHub Personal Access Token",
-    type="password",
-    help="Create at: github.com/settings/tokens (needs workflow scope)"
-)
-
+# Display status of secrets
 if github_token:
-    st.sidebar.success("✅ GitHub Token configured")
+    st.sidebar.success("✅ GitHub Token: Configured from Secrets")
 else:
-    st.sidebar.warning("⚠️ GitHub PAT required to trigger workflows")
-
-groq_token = st.sidebar.text_input(
-    "Groq API Key",
-    type="password",
-    help="Get from: https://console.groq.com/keys"
-)
+    st.sidebar.error("❌ GitHub Token: Not found in Secrets")
 
 if groq_token:
-    st.sidebar.success("✅ Groq API Key configured")
+    st.sidebar.success("✅ Groq API Key: Configured from Secrets")
 else:
-    st.sidebar.info("ℹ️ Groq key can also be set in GitHub Secrets")
+    st.sidebar.error("❌ Groq API Key: Not found in Secrets")
+
+# Optional: Allow manual override (for testing)
+with st.sidebar.expander("🔧 Override Secrets (Optional)"):
+    manual_github = st.text_input(
+        "Manual GitHub Token",
+        type="password",
+        help="Leave empty to use secrets"
+    )
+    manual_groq = st.text_input(
+        "Manual Groq API Key",
+        type="password",
+        help="Leave empty to use secrets"
+    )
+    
+    # Use manual if provided, otherwise use secrets
+    if manual_github:
+        github_token = manual_github
+    if manual_groq:
+        groq_token = manual_groq
 
 st.sidebar.divider()
 st.sidebar.markdown(
@@ -150,7 +162,7 @@ col1, col2, col3 = st.columns([1, 1, 2])
 with col1:
     if st.button("🚀 TRIGGER ANALYSIS", use_container_width=True, type="primary"):
         if not github_token:
-            st.error("❌ GitHub PAT required. Enter it in the sidebar.")
+            st.error("❌ GitHub token not configured. Add to Streamlit Cloud Secrets.")
         elif not hasattr(st.session_state, 'log_content'):
             st.error("❌ Please upload a log file first.")
         else:
