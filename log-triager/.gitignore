@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime-*
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Output
+output/
+results/
+*.log
+.DS_Store
+
+# Artifacts
+*.egg-info/
+dist/
+build/
+
+# Test
+.pytest_cache/
+htmlcov/
+.coverage

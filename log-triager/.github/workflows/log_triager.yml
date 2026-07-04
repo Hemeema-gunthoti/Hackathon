@@ -1,0 +1,132 @@
+name: Log Stream Build Triager (Groq)
+
+on:
+  workflow_dispatch:
+    inputs:
+      logs_base64:
+        description: 'Base64-encoded logs to process'
+        required: true
+      logs_filename:
+        description: 'Original filename'
+        required: true
+      timestamp:
+        description: 'Timestamp when workflow was triggered'
+        required: true
+
+jobs:
+  triager:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+      
+      - name: Decode logs from base64
+        run: |
+          echo "${{ inputs.logs_base64 }}" | base64 -d > /tmp/raw_logs.txt
+          echo "✅ Decoded logs ($(wc -c < /tmp/raw_logs.txt) bytes)"
+          echo "📄 Filename: ${{ inputs.logs_filename }}"
+      
+      - name: SDET 1 - Log Ingestion & Filter
+        id: ingest
+        run: |
+          python -m agents.sdet_1_ingest \
+            --input /tmp/raw_logs.txt \
+            --output /tmp/filtered_logs.json
+          echo "Entry count: $(jq '.total_entries' /tmp/filtered_logs.json)"
+      
+      - name: SDET 2 - LLM Classification (Groq)
+        id: classify
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: |
+          python -m agents.sdet_2_classify \
+            --input /tmp/filtered_logs.json \
+            --output /tmp/classified_logs.json \
+            --api-key "$GROQ_API_KEY"
+      
+      - name: SDET 3 - Validation & Cross-check
+        id: validate
+        run: |
+          python -m agents.sdet_3_validate \
+            --classified /tmp/classified_logs.json \
+            --output /tmp/validated_logs.json \
+            --report /tmp/validation_report.txt
+          echo "=== Validation Report ===" 
+          cat /tmp/validation_report.txt
+      
+      - name: SDET 4 - Directory Router
+        id: route
+        run: |
+          python -m agents.sdet_4_route \
+            --input /tmp/validated_logs.json \
+            --output-dir ./output/categorized
+          echo "✅ Logs routed to categories"
+      
+      - name: SDET 5 - Markdown Report Builder
+        id: report
+        run: |
+          python -m agents.sdet_5_report \
+            --classified /tmp/classified_logs.json \
+            --validated /tmp/validated_logs.json \
+            --output ./output/report.md \
+            --logs-filename "${{ inputs.logs_filename }}" \
+            --timestamp "${{ inputs.timestamp }}"
+          
+          echo "=== Report Generated ===" 
+          head -80 ./output/report.md
+      
+      - name: Create summary JSON
+        run: |
+          python -c "
+          import json
+          with open('/tmp/validated_logs.json', 'r') as f:
+              data = json.load(f)
+          
+          bugs = len([e for e in data['entries'] if e.get('classification') == 'GENUINE_BUG'])
+          flakes = len([e for e in data['entries'] if e.get('classification') == 'ENVIRONMENT_FLAKE'])
+          
+          summary = {
+              'total_logs': len(data['entries']),
+              'genuine_bugs': bugs,
+              'environment_flakes': flakes,
+              'bug_percentage': round(bugs/len(data['entries'])*100, 1) if data['entries'] else 0,
+              'filename': '${{ inputs.logs_filename }}'
+          }
+          
+          with open('./output/summary.json', 'w') as f:
+              json.dump(summary, f, indent=2)
+          
+          print('📊 Summary created')
+          "
+      
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: triager-output
+          path: output/
+          retention-days: 30
+      
+      - name: Commit results back to repo
+        if: always()
+        run: |
+          git config user.name "Log Triager Bot"
+          git config user.email "bot@log-triager.local"
+          git pull origin main || true
+          mkdir -p output results
+          cp output/report.md results/report_$(date +%Y%m%d_%H%M%S).md || true
+          cp output/summary.json results/summary_$(date +%Y%m%d_%H%M%S).json || true
+          git add output/ results/ || true
+          git commit -m "🔍 Log triage report - ${{ inputs.logs_filename }} - ${{ inputs.timestamp }}" || true
+          git push origin main || true
