@@ -55,7 +55,7 @@ def classify_logs(log_entries, api_key):
     system_prompt, user_prompt = build_classification_prompt(log_entries)
     
     message = client.chat.completions.create(
-        model="mixtral-8x7b-32768",
+        model="llama-3.3-70b-versatile",
         max_tokens=2000,
         messages=[
             {"role": "system", "content": system_prompt},
